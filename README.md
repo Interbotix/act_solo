@@ -37,7 +37,7 @@ Using ``venv`` is preferred due its ease of use against frameworks like ROS.
 ```bash
 sudo apt-get install python3-venv
 python3 -m venv ~/aloha # creates a venv "aloha" in the home directory, can be created anywhere
-source ~/aloha/bin/venv
+source ~/aloha/bin/activate
 pip install dm_control==1.0.14
 pip install einops
 pip install h5py
