@@ -1,17 +1,15 @@
-import os
-import numpy as np
-import cv2
-import h5py
 import argparse
+import os
 
+from aloha.constants import DT, JOINT_NAMES
+import h5py
 import matplotlib.pyplot as plt
-from constants import DT
+import numpy as np
 
-import IPython
-e = IPython.embed
+from act.utils import save_videos
 
-JOINT_NAMES = ["waist", "shoulder", "elbow", "forearm_roll", "wrist_angle", "wrist_rotate"]
 STATE_NAMES = JOINT_NAMES + ["gripper"]
+
 
 def load_hdf5(dataset_dir, dataset_name):
     dataset_path = os.path.join(dataset_dir, dataset_name + '.hdf5')
@@ -39,41 +37,6 @@ def main(args):
     save_videos(image_dict, DT, video_path=os.path.join(dataset_dir, dataset_name + '_video.mp4'))
     visualize_joints(qpos, action, plot_path=os.path.join(dataset_dir, dataset_name + '_qpos.png'))
     # visualize_timestamp(t_list, dataset_path) # TODO addn timestamp back
-
-
-def save_videos(video, dt, video_path=None):
-    if isinstance(video, list):
-        cam_names = list(video[0].keys())
-        h, w, _ = video[0][cam_names[0]].shape
-        w = w * len(cam_names)
-        fps = int(1/dt)
-        out = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
-        for ts, image_dict in enumerate(video):
-            images = []
-            for cam_name in cam_names:
-                image = image_dict[cam_name]
-                image = image[:, :, [2, 1, 0]] # swap B and R channel
-                images.append(image)
-            images = np.concatenate(images, axis=1)
-            out.write(images)
-        out.release()
-        print(f'Saved video to: {video_path}')
-    elif isinstance(video, dict):
-        cam_names = list(video.keys())
-        all_cam_videos = []
-        for cam_name in cam_names:
-            all_cam_videos.append(video[cam_name])
-        all_cam_videos = np.concatenate(all_cam_videos, axis=2) # width dimension
-
-        n_frames, h, w, _ = all_cam_videos.shape
-        fps = int(1 / dt)
-        out = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
-        for t in range(n_frames):
-            image = all_cam_videos[t]
-            image = image[:, :, [2, 1, 0]]  # swap B and R channel
-            out.write(image)
-        out.release()
-        print(f'Saved video to: {video_path}')
 
 
 def visualize_joints(qpos_list, command_list, plot_path=None, ylim=None, label_overwrite=None):
