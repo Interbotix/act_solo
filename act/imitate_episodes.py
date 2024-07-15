@@ -1,6 +1,7 @@
 import argparse
 from copy import deepcopy
 import os
+import sys
 import pickle
 
 from aloha.constants import (
@@ -13,14 +14,15 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from act.policy import (
+
+from policy import (
     ACTPolicy,
     CNNMLPPolicy,
 )
-from act.sim_env import (
+from sim_env import (
     BOX_POSE,
 )
-from act.utils import (
+from utils import (
     compute_dict_mean,
     detach_dict,
     load_data,
@@ -46,13 +48,12 @@ def main(args):
     # get task parameters
     is_sim = task_name[:4] == 'sim_'
     if is_sim:
-        from act.constants import SIM_TASK_CONFIGS
+        from constants import SIM_TASK_CONFIGS
         task_config = SIM_TASK_CONFIGS[task_name]
     else:
         from aloha.constants import TASK_CONFIGS
         task_config = TASK_CONFIGS[task_name]
     dataset_dir = task_config['dataset_dir']
-    num_episodes = task_config['num_episodes']
     episode_len = task_config['episode_len']
     camera_names = task_config['camera_names']
 
@@ -118,7 +119,6 @@ def main(args):
 
     train_dataloader, val_dataloader, stats, _ = load_data(
         dataset_dir,
-        num_episodes,
         camera_names,
         batch_size_train,
         batch_size_val,
@@ -472,5 +472,6 @@ if __name__ == '__main__':
     parser.add_argument('--hidden_dim', action='store', type=int, help='hidden_dim', required=False)
     parser.add_argument('--dim_feedforward', action='store', type=int, help='dim_feedforward', required=False)
     parser.add_argument('--temporal_agg', action='store_true')
+    argument = vars(parser.parse_args())
 
     main(vars(parser.parse_args()))

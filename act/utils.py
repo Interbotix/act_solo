@@ -1,4 +1,5 @@
 import cv2
+import fnmatch
 import numpy as np
 import torch
 import os
@@ -26,6 +27,7 @@ class EpisodicDataset(torch.utils.data.Dataset):
         dataset_path = os.path.join(self.dataset_dir, f'episode_{episode_id}.hdf5')
         with h5py.File(dataset_path, 'r') as root:
             is_sim = root.attrs['sim']
+            compressed = root.attrs['compress']
             original_action_shape = root['/action'].shape
             episode_len = original_action_shape[0]
             if sample_full_episode:
@@ -38,6 +40,13 @@ class EpisodicDataset(torch.utils.data.Dataset):
             image_dict = dict()
             for cam_name in self.camera_names:
                 image_dict[cam_name] = root[f'/observations/images/{cam_name}'][start_ts]
+
+            # Decompress the images to match the shape of tensor required for torch.einsum()
+            if compressed:
+                for cam_name in image_dict.keys():
+                    decompressed_image = cv2.imdecode(image_dict[cam_name],1)
+                    image_dict[cam_name] = np.array(decompressed_image)
+
             # get all actions after and including start_ts
             if is_sim:
                 action = root['/action'][start_ts:]
@@ -113,8 +122,29 @@ def get_norm_stats(dataset_dir, num_episodes):
     return stats
 
 
-def load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_size_val):
+def find_all_hdf5(dataset_dir, skip_mirrored_data):
+    hdf5_files = []
+    for root, dirs, files in os.walk(dataset_dir):
+        for filename in fnmatch.filter(files, '*.hdf5'):
+            if 'features' in filename:
+                continue
+            if skip_mirrored_data and 'mirror' in filename:
+                continue
+            hdf5_files.append(os.path.join(root, filename))
+    print(f'Found {len(hdf5_files)} hdf5 files')
+    return hdf5_files
+
+
+def load_data(dataset_dir, camera_names, batch_size_train, batch_size_val, skip_mirrored_data=False):
     print(f'\nData from: {dataset_dir}\n')
+
+    # verify that the directory passed is a string
+    if isinstance(dataset_dir, str):
+        # get all the episodes from the directory.
+        dataset_path_list_list = [find_all_hdf5(dataset_dir, skip_mirrored_data)]
+        # get the length of the list. Store it as number of episodes.
+        num_episodes = len(dataset_path_list_list[0])
+
     # obtain train test split
     train_ratio = 0.8
     shuffled_indices = np.random.permutation(num_episodes)
