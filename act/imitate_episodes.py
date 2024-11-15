@@ -4,9 +4,9 @@ import os
 import sys
 import pickle
 
-from aloha.constants import (
-    DT,
-    FOLLOWER_GRIPPER_JOINT_OPEN,
+from aloha.robot_utils import (
+    load_yaml_file,
+    FOLLOWER_GRIPPER_JOINT_OPEN
 )
 from einops import rearrange
 import matplotlib.pyplot as plt
@@ -19,9 +19,11 @@ from policy import (
     ACTPolicy,
     CNNMLPPolicy,
 )
-from sim_env import (
-    BOX_POSE,
-)
+# Simulation is not supported for Aloha Solo
+# TODO: Uncommenting this will result in error. Needs to be fixed
+# from sim_env import (
+#     BOX_POSE,
+# )
 from utils import (
     compute_dict_mean,
     detach_dict,
@@ -44,6 +46,12 @@ def main(args):
     batch_size_train = args['batch_size']
     batch_size_val = args['batch_size']
     num_epochs = args['num_epochs']
+    robot = args['robot']
+
+
+    base_path = os.path.expanduser("~/interbotix_ws/src/aloha/config")
+
+    robot_config = load_yaml_file("robot", robot, base_path=base_path).get('robot')
 
     # get task parameters
     is_sim = task_name[:4] == 'sim_'
@@ -51,14 +59,16 @@ def main(args):
         from constants import SIM_TASK_CONFIGS
         task_config = SIM_TASK_CONFIGS[task_name]
     else:
-        from aloha.constants import TASK_CONFIGS
-        task_config = TASK_CONFIGS[task_name]
-    dataset_dir = task_config['dataset_dir']
-    episode_len = task_config['episode_len']
-    camera_names = task_config['camera_names']
+        task_config = load_yaml_file("task", base_path=base_path)
+        task_config = task_config['tasks'].get(task_name)
+
+    dataset_dir = os.path.expanduser(task_config.get('dataset_dir'))
+    episode_len = task_config.get('episode_len')
+
+    camera_names = [camera['name'] for camera in robot_config.get('cameras').get('camera_instances')]
 
     # fixed parameters
-    state_dim = 14
+    state_dim = 7
     lr_backbone = 1e-5
     backbone = 'resnet18'
     if policy_class == 'ACT':
@@ -102,7 +112,8 @@ def main(args):
         'seed': args['seed'],
         'temporal_agg': args['temporal_agg'],
         'camera_names': camera_names,
-        'real_robot': not is_sim
+        'real_robot': not is_sim,
+        'robot_config': robot_config
     }
 
     if is_eval:
@@ -182,7 +193,9 @@ def eval_bc(config, ckpt_name, save_episode=True):
     max_timesteps = config['episode_len']
     task_name = config['task_name']
     temporal_agg = config['temporal_agg']
+    config_robot = config['robot_config']
     onscreen_cam = 'angle'
+    dt = 1/config_robot.get('fps', 50)
 
     # load policy and stats
     ckpt_path = os.path.join(ckpt_dir, ckpt_name)
@@ -213,7 +226,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
             node = get_interbotix_global_node()
         except:
             node = create_interbotix_global_node('aloha')
-        env = make_real_env(node=node, setup_base=False)
+        env = make_real_env(node=node, setup_robots= False, torque_base=False, setup_base=False, config=config_robot)
         try:
             robot_startup(node)
         except InterbotixException:
@@ -237,10 +250,11 @@ def eval_bc(config, ckpt_name, save_episode=True):
     for rollout_id in range(num_rollouts):
         rollout_id += 0
         ### set task
-        if 'sim_transfer_cube' in task_name:
-            BOX_POSE[0] = sample_box_pose() # used in sim reset
-        elif 'sim_insertion' in task_name:
-            BOX_POSE[0] = np.concatenate(sample_insertion_pose()) # used in sim reset
+        # TODO: Simulation is not supported
+        # if 'sim_transfer_cube' in task_name:
+        #     BOX_POSE[0] = sample_box_pose() # used in sim reset
+        # elif 'sim_insertion' in task_name:
+        #     BOX_POSE[0] = np.concatenate(sample_insertion_pose()) # used in sim reset
 
         ts = env.reset()
 
@@ -265,7 +279,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
                 if onscreen_render:
                     image = env._physics.render(height=480, width=640, camera_id=onscreen_cam)
                     plt_img.set_data(image)
-                    plt.pause(DT)
+                    plt.pause(dt)
 
                 ### process previous timestep to get qpos and image_list
                 obs = ts.observation
@@ -306,7 +320,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
                 target_qpos = action
 
                 ### step the environment
-                ts = env.step(target_qpos)
+                ts = env.step(target_qpos.astype(float).tolist())
 
                 ### for visualization
                 qpos_list.append(qpos_numpy)
@@ -317,9 +331,10 @@ def eval_bc(config, ckpt_name, save_episode=True):
         if real_robot:
             # open
             move_grippers(
-                [env.follower_bot_left, env.follower_bot_right],
-                [FOLLOWER_GRIPPER_JOINT_OPEN] * 2,
+                env.follower_bots,
+                [FOLLOWER_GRIPPER_JOINT_OPEN],
                 moving_time=0.5,
+                dt=dt,
             )
             pass
 
@@ -331,7 +346,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
         print(f'Rollout {rollout_id}\n{episode_return=}, {episode_highest_reward=}, {env_max_reward=}, Success: {episode_highest_reward==env_max_reward}')
 
         if save_episode:
-            save_videos(image_list, DT, video_path=os.path.join(ckpt_dir, f'video{rollout_id}.mp4'))
+            save_videos(image_list, dt, video_path=os.path.join(ckpt_dir, f'video{rollout_id}.mp4'))
 
     success_rate = np.mean(np.array(highest_rewards) == env_max_reward)
     avg_return = np.mean(episode_returns)
@@ -459,6 +474,7 @@ if __name__ == '__main__':
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--onscreen_render', action='store_true')
     parser.add_argument('--ckpt_dir', action='store', type=str, help='ckpt_dir', required=True)
+    parser.add_argument('--robot', action='store', type=str, help='robot', required=True)
     parser.add_argument('--policy_class', action='store', type=str, help='policy_class, capitalize', required=True)
     parser.add_argument('--task_name', action='store', type=str, help='task_name', required=True)
     parser.add_argument('--batch_size', action='store', type=int, help='batch_size', required=True)
